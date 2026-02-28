@@ -1,0 +1,7 @@
+{
+  "skip_addresses": [
+    "example_address_1",
+    "example_address_2",
+    "example_address_3"
+  ]
+}
