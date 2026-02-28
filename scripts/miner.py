@@ -194,11 +194,20 @@ def fetch_top_traders(token_contract_address: str, chain_id: int) -> List[Dict]:
     }
     data = make_api_request(API_BASE_URL_1, params)
 
-    if data and "rankingList" in data:
-        print(f"成功获取 {len(data['rankingList'])} 个盈利地址。")
-        return data["rankingList"]
+    # API 可能返回 'rankingList' 或 'list' 字段
+    if data:
+        if "rankingList" in data:
+            print(f"成功获取 {len(data['rankingList'])} 个盈利地址。")
+            return data["rankingList"]
+        elif "list" in data:
+            print(f"成功获取 {len(data['list'])} 个盈利地址。")
+            return data["list"]
+        else:
+            print(f"获取代币 {token_contract_address} 的 TOP 盈利地址失败。")
+            print(f"API 返回数据键: {list(data.keys())}")
+            return []
     else:
-        print(f"获取代币 {token_contract_address} 的 TOP 盈利地址失败。")
+        print(f"获取代币 {token_contract_address} 的 TOP 盈利地址失败 - API 无返回数据。")
         return []
 
 
