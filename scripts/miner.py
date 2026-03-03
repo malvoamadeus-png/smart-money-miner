@@ -48,9 +48,17 @@ API_BASE_URL_1 = "https://web3.okx.com/priapi/v1/dx/market/v2/pnl/top-trader/ran
 API_BASE_URL_2 = "https://web3.okx.com/priapi/v1/dx/market/v2/pnl/token-list"
 API_BASE_URL_4 = "https://web3.okx.com/priapi/v1/dx/market/v2/pnl/token-list"
 
-CHAIN_ID = 501  # Solana 链 ID
+SOL_CHAIN_ID = 501  # Solana 链 ID
+BSC_CHAIN_ID = 56   # BNB Chain (BSC) 链 ID
 MAX_RETRIES = 3  # API 请求最大重试次数
 RETRY_DELAY = 5  # 重试间隔时间（秒）
+
+# Four Meme API (BSC 上类似 PumpFun 的平台)
+FOUR_MEME_API_URL = "https://four.meme/meme-api/v1/private/token/query"
+DEFAULT_FOURMEME_LIMIT = 20
+
+# Binance AI Narrative API
+BINANCE_AI_NARRATIVE_URL = "https://web3.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/token/ai/narrative/query"
 
 # 筛选阈值（移除90天/30天相关）
 TOP5_MIN_PROFIT_RATE = 0.0
@@ -126,6 +134,13 @@ def load_skip_addresses(file_path: str = SKIP_ADDRESSES_FILE) -> Set[str]:
         return set()
 
 
+def detect_chain_id(address: str) -> int:
+    """根据地址格式自动检测链: 0x前缀 = BSC(56), 否则 = Solana(501)"""
+    if address.strip().lower().startswith("0x"):
+        return BSC_CHAIN_ID
+    return SOL_CHAIN_ID
+
+
 # --- PumpFun API 集成 ---
 
 def fetch_pumpfun_tokens(limit: int = DEFAULT_PUMPFUN_LIMIT, offset: int = 0) -> List[Dict]:
@@ -177,6 +192,105 @@ def fetch_pumpfun_tokens(limit: int = DEFAULT_PUMPFUN_LIMIT, offset: int = 0) ->
     except Exception as e:
         print(f"从PumpFun API获取代币失败: {e}")
         return []
+
+
+# --- Four Meme API 集成 (BSC) ---
+
+def fetch_four_meme_tokens(limit: int = DEFAULT_FOURMEME_LIMIT) -> List[Dict]:
+    """
+    从Four Meme API获取最近已毕业代币列表 (BSC链)
+
+    返回格式与 fetch_pumpfun_tokens 一致:
+    [
+        {
+            "mint": "0x...",
+            "name": "token_name",
+            "symbol": "token_symbol",
+            "web_url": "...",
+            "twitter_url": "..."
+        },
+        ...
+    ]
+    """
+    print(f"正在从Four Meme API获取BSC已毕业代币 (limit={limit})...")
+
+    all_items = []
+    seen_addresses = set()
+    page_size = min(limit, 30)
+    max_pages = (limit + page_size - 1) // page_size
+
+    for page_index in range(1, max_pages + 1):
+        params = {
+            "orderBy": "TimeDesc",
+            "tokenName": "",
+            "listedPancake": "true",
+            "pageIndex": str(page_index),
+            "pageSize": str(page_size),
+            "symbol": "",
+            "labels": "",
+        }
+        try:
+            response = requests.get(FOUR_MEME_API_URL, params=params, timeout=15)
+            data = response.json()
+        except Exception as e:
+            print(f"获取Four Meme列表失败: {e}")
+            break
+
+        token_list = data.get("data") or []
+        if not token_list:
+            break
+
+        for raw in token_list:
+            address = (raw.get("address") or "").strip().lower()
+            if not address or address in seen_addresses:
+                continue
+            seen_addresses.add(address)
+
+            short_name = (raw.get("shortName") or raw.get("name") or "").strip()
+            symbol = (raw.get("symbol") or short_name).strip()
+            web_url = (raw.get("webUrl") or "").strip()
+            twitter_url = (raw.get("twitterUrl") or "").strip()
+
+            all_items.append({
+                "mint": address,
+                "name": short_name,
+                "symbol": symbol,
+                "web_url": web_url,
+                "twitter_url": twitter_url,
+            })
+
+            if len(all_items) >= limit:
+                break
+
+        if len(all_items) >= limit:
+            break
+        time.sleep(0.5)
+
+    print(f"成功获取 {len(all_items)} 个BSC已毕业代币。")
+    return all_items[:limit]
+
+
+def is_binance_token(web_url: str, twitter_url: str) -> bool:
+    """检测代币是否与Binance相关"""
+    text = f"{web_url} {twitter_url}".lower()
+    keywords = ["binance", "bnbchain", "_richardteng", "nina_rong"]
+    return any(k in text for k in keywords)
+
+
+def fetch_binance_ai_narrative(address: str) -> Optional[str]:
+    """获取币安AI叙事内容"""
+    params = {
+        "chainId": "56",
+        "contractAddress": address.lower()
+    }
+    try:
+        resp = requests.get(BINANCE_AI_NARRATIVE_URL, params=params, timeout=15)
+        data = resp.json()
+        if data.get("code") == "000000" and data.get("success"):
+            return data.get("data", {}).get("text", {}).get("cn")
+    except Exception as e:
+        print(f"获取币安AI叙事失败 ({address}): {e}")
+    return None
 
 
 # --- OKX API 封装函数（复用自main.py） ---
@@ -294,26 +408,21 @@ def fetch_token_list_paged(wallet_address: str, chain_id: int, max_pages: int = 
 
 # --- 核心分析逻辑 ---
 
-def analyze_wallet_address(wallet_address: str, chain_id: int) -> Optional[Dict]:
+def analyze_wallet_address(wallet_address: str, chain_id: int, token_info: Optional[Dict] = None) -> Optional[Dict]:
     """
     分析单个钱包地址，返回分析结果
 
-    返回格式:
-    {
-        "wallet_address": "...",
-        "top5_avg_profit_rate": 0.85,
-        "top10_avg_profit_rate": 0.62,
-        "overall_win_rate": 35.5,
-        "average_profit_usdt": 1250.5,
-        "average_profit_rate": 45.2,
-        "total_tokens_traded": 87,
-        "passed_filter": True
-    }
+    参数:
+        wallet_address: 钱包地址
+        chain_id: 链ID (501=Solana, 56=BSC)
+        token_info: 可选，代币元数据 (含 web_url, twitter_url 等，用于BSC分析)
     """
     print(f"\n--- 正在分析地址: {wallet_address} ---")
 
+    chain_name = "bsc" if chain_id == BSC_CHAIN_ID else "sol"
     result = {
         "wallet_address": wallet_address,
+        "chain": chain_name,
         "top5_avg_profit_rate": None,
         "top10_avg_profit_rate": None,
         "overall_win_rate": None,
@@ -392,6 +501,19 @@ def analyze_wallet_address(wallet_address: str, chain_id: int) -> Optional[Dict]
 
     result["passed_filter"] = True
     print(f"✓ 地址 {wallet_address} 通过所有筛选条件！")
+
+    # BSC 特有: 检测是否为Binance相关代币，获取AI叙事
+    if chain_id == BSC_CHAIN_ID and token_info:
+        web_url = token_info.get("web_url", "")
+        twitter_url = token_info.get("twitter_url", "")
+        if web_url or twitter_url:
+            result["is_binance"] = is_binance_token(web_url, twitter_url)
+        token_address = token_info.get("mint", "")
+        if token_address:
+            narrative = fetch_binance_ai_narrative(token_address)
+            if narrative:
+                result["ai_narrative"] = narrative
+
     return result
 
 
@@ -399,6 +521,8 @@ def run_smart_money_analysis(
     token_addresses: Optional[List[str]] = None,
     fetch_from_pumpfun: bool = False,
     pumpfun_limit: int = DEFAULT_PUMPFUN_LIMIT,
+    fetch_from_fourmeme: bool = False,
+    fourmeme_limit: int = DEFAULT_FOURMEME_LIMIT,
     skip_addresses_file: Optional[str] = SKIP_ADDRESSES_FILE
 ) -> Dict:
     """
@@ -408,26 +532,18 @@ def run_smart_money_analysis(
         token_addresses: 用户提供的代币地址列表（可选）
         fetch_from_pumpfun: 是否从PumpFun抓取（可选）
         pumpfun_limit: 从PumpFun抓取的数量（默认20）
+        fetch_from_fourmeme: 是否从Four Meme抓取BSC代币（可选）
+        fourmeme_limit: 从Four Meme抓取的数量（默认20）
         skip_addresses_file: 跳过地址文件路径（可选）
-
-    返回:
-        {
-            "timestamp": "2026-02-28T10:30:00",
-            "source": "pumpfun" | "manual" | "mixed",
-            "tokens_analyzed": 20,
-            "total_addresses_found": 1500,
-            "filtered_addresses_count": 45,
-            "filtered_addresses": [...],
-            "full_data": [...]
-        }
     """
     print("=" * 60)
     print("聪明钱地址挖掘系统启动")
     print("=" * 60)
 
     # 确定数据源
-    source = "manual"
+    sources = []
     all_token_addresses = []
+    token_info_map = {}  # 代币地址 -> 代币元数据 (用于BSC的binance检测和AI叙事)
 
     # 1. 从PumpFun获取代币
     if fetch_from_pumpfun:
@@ -435,17 +551,29 @@ def run_smart_money_analysis(
         pumpfun_addresses = [token["mint"] for token in pumpfun_tokens if token.get("mint")]
         all_token_addresses.extend(pumpfun_addresses)
         print(f"从PumpFun获取了 {len(pumpfun_addresses)} 个代币地址。")
-        source = "pumpfun"
+        sources.append("pumpfun")
 
-    # 2. 添加用户手动提供的代币
+    # 2. 从Four Meme获取BSC代币
+    if fetch_from_fourmeme:
+        fourmeme_tokens = fetch_four_meme_tokens(limit=fourmeme_limit)
+        for token in fourmeme_tokens:
+            mint = token.get("mint")
+            if mint:
+                all_token_addresses.append(mint)
+                token_info_map[mint] = token
+        print(f"从Four Meme获取了 {len(fourmeme_tokens)} 个BSC代币地址。")
+        sources.append("fourmeme")
+
+    # 3. 添加用户手动提供的代币
     if token_addresses:
         all_token_addresses.extend(token_addresses)
         print(f"用户提供了 {len(token_addresses)} 个代币地址。")
-        if source == "pumpfun":
-            source = "mixed"
+        sources.append("manual")
+
+    source = "+".join(sources) if sources else "manual"
 
     if not all_token_addresses:
-        print("错误：未提供任何代币地址，请使用 --tokens 或 --pumpfun 参数。")
+        print("错误：未提供任何代币地址，请使用 --tokens、--pumpfun 或 --fourmeme 参数。")
         return {
             "timestamp": datetime.now().isoformat(),
             "source": source,
@@ -469,7 +597,7 @@ def run_smart_money_analysis(
 
     for i, token_address in enumerate(all_token_addresses):
         print(f"\n[{i + 1}/{len(all_token_addresses)}] 处理代币: {token_address}")
-        top_traders = fetch_top_traders(token_address, CHAIN_ID)
+        top_traders = fetch_top_traders(token_address, detect_chain_id(token_address))
 
         for trader in top_traders:
             wallet_addr = trader.get("holderWalletAddress")
@@ -510,7 +638,17 @@ def run_smart_money_analysis(
     for i, wallet_address in enumerate(processable_addresses):
         print(f"\n[{i + 1}/{len(processable_addresses)}] 分析地址: {wallet_address}")
 
-        result = analyze_wallet_address(wallet_address, CHAIN_ID)
+        chain_id = detect_chain_id(wallet_address)
+        # 查找该钱包关联的代币元数据 (用于BSC分析)
+        wallet_token_info = None
+        if chain_id == BSC_CHAIN_ID:
+            source_tokens = token_source_map.get(wallet_address, [])
+            for src_token in source_tokens:
+                if src_token in token_info_map:
+                    wallet_token_info = token_info_map[src_token]
+                    break
+
+        result = analyze_wallet_address(wallet_address, chain_id, token_info=wallet_token_info)
 
         if result:
             # 添加来源代币信息
@@ -563,30 +701,34 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 从PumpFun抓取20个代币
+  # 从PumpFun抓取20个代币 (Solana)
   python smart_money_miner.py --pumpfun --limit 20
 
-  # 手动提供代币地址
-  python smart_money_miner.py --tokens token1,token2,token3
+  # 从Four Meme抓取10个代币 (BSC)
+  python smart_money_miner.py --fourmeme --fourmeme-limit 10
+
+  # 手动提供代币地址 (自动检测链)
+  python smart_money_miner.py --tokens token1,token2,0xABC123
 
   # 混合使用
-  python smart_money_miner.py --tokens token1 --pumpfun --limit 10
+  python smart_money_miner.py --tokens token1 --pumpfun --limit 10 --fourmeme
 
-  # 测试PumpFun API
+  # 测试API连接
   python smart_money_miner.py --test-pumpfun
+  python smart_money_miner.py --test-fourmeme
         """
     )
 
     parser.add_argument(
         '--tokens',
         type=str,
-        help='逗号分隔的代币地址列表，例如: token1,token2,token3'
+        help='逗号分隔的代币地址列表，例如: token1,token2,0xABC123'
     )
 
     parser.add_argument(
         '--pumpfun',
         action='store_true',
-        help='从PumpFun API抓取已毕业代币'
+        help='从PumpFun API抓取已毕业代币 (Solana)'
     )
 
     parser.add_argument(
@@ -594,6 +736,19 @@ def main():
         type=int,
         default=DEFAULT_PUMPFUN_LIMIT,
         help=f'从PumpFun抓取的代币数量 (默认: {DEFAULT_PUMPFUN_LIMIT})'
+    )
+
+    parser.add_argument(
+        '--fourmeme',
+        action='store_true',
+        help='从Four Meme API抓取已毕业代币 (BSC)'
+    )
+
+    parser.add_argument(
+        '--fourmeme-limit',
+        type=int,
+        default=DEFAULT_FOURMEME_LIMIT,
+        help=f'从Four Meme抓取的代币数量 (默认: {DEFAULT_FOURMEME_LIMIT})'
     )
 
     parser.add_argument(
@@ -609,6 +764,12 @@ def main():
         help='测试PumpFun API连接'
     )
 
+    parser.add_argument(
+        '--test-fourmeme',
+        action='store_true',
+        help='测试Four Meme API连接'
+    )
+
     args = parser.parse_args()
 
     # 测试模式
@@ -618,7 +779,28 @@ def main():
         if tokens:
             print(f"\n成功获取 {len(tokens)} 个代币:")
             for i, token in enumerate(tokens, 1):
-                print(f"{i}. {token['symbol']} ({token['name']}) - {token['mint']}")
+                name = token['name'].encode('utf-8', errors='replace').decode('utf-8')
+                symbol = token['symbol'].encode('utf-8', errors='replace').decode('utf-8')
+                try:
+                    print(f"{i}. {symbol} ({name}) - {token['mint']}")
+                except UnicodeEncodeError:
+                    print(f"{i}. {token['mint']}")
+        else:
+            print("测试失败，无法获取代币数据。")
+        return
+
+    if args.test_fourmeme:
+        print("测试Four Meme API连接...")
+        tokens = fetch_four_meme_tokens(limit=5)
+        if tokens:
+            print(f"\n成功获取 {len(tokens)} 个BSC代币:")
+            for i, token in enumerate(tokens, 1):
+                name = token['name'].encode('utf-8', errors='replace').decode('utf-8')
+                symbol = token['symbol'].encode('utf-8', errors='replace').decode('utf-8')
+                try:
+                    print(f"{i}. {symbol} ({name}) - {token['mint']}")
+                except UnicodeEncodeError:
+                    print(f"{i}. {token['mint']}")
         else:
             print("测试失败，无法获取代币数据。")
         return
@@ -629,15 +811,17 @@ def main():
         token_addresses = [addr.strip() for addr in args.tokens.split(',') if addr.strip()]
 
     # 运行分析
-    if not args.pumpfun and not token_addresses:
+    if not args.pumpfun and not args.fourmeme and not token_addresses:
         parser.print_help()
-        print("\n错误：请至少提供 --tokens 或 --pumpfun 参数之一。")
+        print("\n错误：请至少提供 --tokens、--pumpfun 或 --fourmeme 参数之一。")
         return
 
     run_smart_money_analysis(
         token_addresses=token_addresses,
         fetch_from_pumpfun=args.pumpfun,
         pumpfun_limit=args.limit,
+        fetch_from_fourmeme=args.fourmeme,
+        fourmeme_limit=args.fourmeme_limit,
         skip_addresses_file=args.skip_file
     )
 

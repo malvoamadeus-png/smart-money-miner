@@ -1,12 +1,12 @@
 ---
 name: smart-money-miner
-description: This skill should be used when the user asks to "mine smart money addresses", "find smart money", "analyze PumpFun tokens", "find profitable traders", "discover good addresses", mentions "聪明钱", "优秀地址", or discusses finding and filtering high-performing wallet addresses from token trading data.
-version: 1.0.0
+description: This skill should be used when the user asks to "mine smart money addresses", "find smart money", "analyze PumpFun tokens", "analyze Four Meme tokens", "analyze BSC tokens", "find profitable traders", "discover good addresses", mentions "聪明钱", "优秀地址", "BSC聪明钱", "BNB链", or discusses finding and filtering high-performing wallet addresses from token trading data.
+version: 1.1.0
 ---
 
 # Smart Money Address Miner
 
-This skill helps you discover and filter high-performing wallet addresses (smart money) from PumpFun graduated tokens or user-provided token addresses.
+This skill helps you discover and filter high-performing wallet addresses (smart money) from PumpFun (Solana) or Four Meme (BSC) graduated tokens, or user-provided token addresses.
 
 ## Overview
 
@@ -15,33 +15,40 @@ The Smart Money Miner analyzes token trading data to identify wallet addresses w
 ## When This Skill Applies
 
 This skill activates when the user wants to:
-- Mine smart money addresses from PumpFun graduated tokens
-- Analyze specific token addresses to find profitable traders
-- Discover high-performing wallet addresses
+- Mine smart money addresses from PumpFun graduated tokens (Solana)
+- Mine smart money addresses from Four Meme graduated tokens (BSC)
+- Analyze specific token addresses to find profitable traders (auto-detects chain)
+- Discover high-performing wallet addresses on Solana or BSC
 - Filter addresses based on profitability metrics
 - Find addresses with good win rates and average profits
 
 ## Key Features
 
-- **Flexible Input**: Fetch tokens from PumpFun API or use manually provided addresses
+- **Flexible Input**: Fetch tokens from PumpFun API (Solana) or Four Meme API (BSC), or use manually provided addresses
+- **Multi-Chain**: Supports Solana and BNB Chain (BSC), auto-detects chain by address format
 - **Multi-Metric Analysis**: Evaluates addresses on 5+ key performance indicators
 - **Smart Filtering**: Removes low-quality addresses automatically
 - **JSON Output**: Easy integration with other tools and systems
 - **Skip List Support**: Exclude known addresses from analysis
+- **BSC Extras**: Binance token detection and AI narrative for BSC tokens
 
 ## Usage
 
 ### Basic Usage
 
 ```bash
-# Analyze 20 PumpFun graduated tokens (recommended)
+# Analyze 20 PumpFun graduated tokens - Solana (recommended)
 python scripts/miner.py --pumpfun --limit 20
 
-# Analyze specific tokens
-python scripts/miner.py --tokens token1,token2,token3
+# Analyze 10 Four Meme graduated tokens - BSC
+python scripts/miner.py --fourmeme --fourmeme-limit 10
 
-# Test PumpFun API connection
+# Analyze specific tokens (auto-detects chain)
+python scripts/miner.py --tokens token1,token2,0xABC123
+
+# Test API connections
 python scripts/miner.py --test-pumpfun
+python scripts/miner.py --test-fourmeme
 ```
 
 ### Advanced Usage
@@ -50,8 +57,8 @@ python scripts/miner.py --test-pumpfun
 # Use custom skip addresses file
 python scripts/miner.py --pumpfun --skip-file my_skip_list.json
 
-# Mixed mode: PumpFun + manual tokens
-python scripts/miner.py --tokens token1 --pumpfun --limit 10
+# Mixed mode: PumpFun + Four Meme + manual tokens
+python scripts/miner.py --tokens token1 --pumpfun --limit 10 --fourmeme
 ```
 
 ## Filtering Criteria
@@ -254,8 +261,11 @@ def smart_money_command(message):
 Edit these parameters in `scripts/miner.py`:
 
 ```python
-# PumpFun settings
+# PumpFun settings (Solana)
 DEFAULT_PUMPFUN_LIMIT = 20
+
+# Four Meme settings (BSC)
+DEFAULT_FOURMEME_LIMIT = 20
 
 # Filtering thresholds
 TOP5_MIN_PROFIT_RATE = 0.0
@@ -271,7 +281,9 @@ MIN_AVG_PROFIT_RATE = 0.0
 - Built-in rate limiting to avoid API blocks
 - Results include both filtered and full data for analysis
 - All timestamps are in ISO 8601 format
-- Addresses are Solana wallet addresses (Base58 encoded)
+- Solana addresses are Base58 encoded, BSC addresses use 0x prefix
+- Chain is auto-detected from address format (`0x` = BSC, otherwise = Solana)
+- BSC results may include `is_binance` flag and `ai_narrative` field
 
 ## Support
 
