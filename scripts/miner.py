@@ -523,7 +523,8 @@ def run_smart_money_analysis(
     pumpfun_limit: int = DEFAULT_PUMPFUN_LIMIT,
     fetch_from_fourmeme: bool = False,
     fourmeme_limit: int = DEFAULT_FOURMEME_LIMIT,
-    skip_addresses_file: Optional[str] = SKIP_ADDRESSES_FILE
+    skip_addresses_file: Optional[str] = SKIP_ADDRESSES_FILE,
+    wallet_addresses: Optional[List[str]] = None
 ) -> Dict:
     """
     运行聪明钱地址挖掘分析
@@ -535,6 +536,7 @@ def run_smart_money_analysis(
         fetch_from_fourmeme: 是否从Four Meme抓取BSC代币（可选）
         fourmeme_limit: 从Four Meme抓取的数量（默认20）
         skip_addresses_file: 跳过地址文件路径（可选）
+        wallet_addresses: 直接分析的钱包地址列表（可选，跳过代币发现步骤）
     """
     print("=" * 60)
     print("聪明钱地址挖掘系统启动")
@@ -572,8 +574,75 @@ def run_smart_money_analysis(
 
     source = "+".join(sources) if sources else "manual"
 
+    # --- 直接钱包分析模式 ---
+    if wallet_addresses:
+        sources.append("wallets")
+        source = "+".join(sources) if sources else "wallets"
+        print(f"用户直接提供了 {len(wallet_addresses)} 个钱包地址进行分析。")
+
+        skip_addresses = load_skip_addresses(skip_addresses_file) if skip_addresses_file else set()
+        processable_addresses = [addr for addr in wallet_addresses if addr not in skip_addresses]
+        print(f"移除跳过地址后，剩余 {len(processable_addresses)} 个地址待分析。")
+
+        if not processable_addresses:
+            print("所有地址均已被跳过或无有效地址，程序结束。")
+            return {
+                "timestamp": datetime.now().isoformat(),
+                "source": source,
+                "tokens_analyzed": 0,
+                "total_addresses_found": len(wallet_addresses),
+                "filtered_addresses_count": 0,
+                "filtered_addresses": [],
+                "full_data": []
+            }
+
+        # 直接跳到地址分析步骤
+        all_results = []
+        filtered_results = []
+        token_source_map = {}
+        token_info_map = {}
+
+        print("\n" + "=" * 60)
+        print("开始钱包地址分析（直接模式）")
+        print("=" * 60)
+
+        for i, wallet_address in enumerate(processable_addresses):
+            print(f"\n[{i + 1}/{len(processable_addresses)}] 分析地址: {wallet_address}")
+            chain_id = detect_chain_id(wallet_address)
+            result = analyze_wallet_address(wallet_address, chain_id)
+
+            if result:
+                result["source_tokens"] = []
+                all_results.append(result)
+                if result["passed_filter"]:
+                    filtered_results.append(result)
+
+            time.sleep(0.5)
+
+        output_data = {
+            "timestamp": datetime.now().isoformat(),
+            "source": source,
+            "tokens_analyzed": 0,
+            "total_addresses_found": len(wallet_addresses),
+            "filtered_addresses_count": len(filtered_results),
+            "filtered_addresses": [r["wallet_address"] for r in filtered_results],
+            "full_data": all_results
+        }
+
+        output_file = "smart_money_results.json"
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, ensure_ascii=False, indent=2)
+        print(f"\n结果已保存到 {output_file}")
+
+        print(f"\n{'=' * 60}")
+        print(f"分析完成！共分析 {len(processable_addresses)} 个钱包地址，{len(filtered_results)} 个通过筛选。")
+        print(f"{'=' * 60}")
+
+        return output_data
+
+    # --- 代币发现模式 ---
     if not all_token_addresses:
-        print("错误：未提供任何代币地址，请使用 --tokens、--pumpfun 或 --fourmeme 参数。")
+        print("错误：未提供任何代币地址，请使用 --tokens、--pumpfun、--fourmeme 或 --wallets 参数。")
         return {
             "timestamp": datetime.now().isoformat(),
             "source": source,
@@ -710,6 +779,9 @@ def main():
   # 手动提供代币地址 (自动检测链)
   python smart_money_miner.py --tokens token1,token2,0xABC123
 
+  # 直接分析钱包地址 (自动检测链)
+  python smart_money_miner.py --wallets 0xAddr1,0xAddr2,SolAddr1
+
   # 混合使用
   python smart_money_miner.py --tokens token1 --pumpfun --limit 10 --fourmeme
 
@@ -723,6 +795,12 @@ def main():
         '--tokens',
         type=str,
         help='逗号分隔的代币地址列表，例如: token1,token2,0xABC123'
+    )
+
+    parser.add_argument(
+        '--wallets',
+        type=str,
+        help='逗号分隔的钱包地址列表，直接分析这些地址（跳过代币发现步骤）'
     )
 
     parser.add_argument(
@@ -810,10 +888,15 @@ def main():
     if args.tokens:
         token_addresses = [addr.strip() for addr in args.tokens.split(',') if addr.strip()]
 
+    # 解析钱包地址
+    wallet_addresses = None
+    if args.wallets:
+        wallet_addresses = [addr.strip() for addr in args.wallets.split(',') if addr.strip()]
+
     # 运行分析
-    if not args.pumpfun and not args.fourmeme and not token_addresses:
+    if not args.pumpfun and not args.fourmeme and not token_addresses and not wallet_addresses:
         parser.print_help()
-        print("\n错误：请至少提供 --tokens、--pumpfun 或 --fourmeme 参数之一。")
+        print("\n错误：请至少提供 --tokens、--wallets、--pumpfun 或 --fourmeme 参数之一。")
         return
 
     run_smart_money_analysis(
@@ -822,7 +905,8 @@ def main():
         pumpfun_limit=args.limit,
         fetch_from_fourmeme=args.fourmeme,
         fourmeme_limit=args.fourmeme_limit,
-        skip_addresses_file=args.skip_file
+        skip_addresses_file=args.skip_file,
+        wallet_addresses=wallet_addresses
     )
 
 

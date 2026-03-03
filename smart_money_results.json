@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-03-03T21:03:54.872593",
+  "source": "wallets",
+  "tokens_analyzed": 0,
+  "total_addresses_found": 1,
+  "filtered_addresses_count": 0,
+  "filtered_addresses": [],
+  "full_data": [
+    {
+      "wallet_address": "0x76a280376c5332abbbae1786a73c70116906e757",
+      "chain": "bsc",
+      "top5_avg_profit_rate": 4.196,
+      "top10_avg_profit_rate": 2.746,
+      "overall_win_rate": 54.8,
+      "average_profit_usdt": 96.9,
+      "average_profit_rate": 10.95,
+      "total_tokens_traded": 500,
+      "passed_filter": false,
+      "source_tokens": []
+    }
+  ]
+}
